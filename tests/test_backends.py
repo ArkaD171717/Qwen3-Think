@@ -1,0 +1,100 @@
+import pytest
+
+from qwen_think.backends import (
+    DashScopeBackend,
+    LlamaCppBackend,
+    VLLMBackend,
+    detect_backend,
+)
+from qwen_think.backends.vllm import SGLangBackend
+from qwen_think.types import ThinkingMode
+
+
+class TestVLLMBackend:
+    def setup_method(self):
+        self.b = VLLMBackend()
+
+    def test_think_mode_payload(self):
+        p = self.b.build_payload(ThinkingMode.THINK)
+        assert p.extra_body["chat_template_kwargs"]["enable_thinking"] is True
+
+    def test_no_think_explicitly_sets_false(self):
+        """Verifies fix for vLLM semantic-router bug #858."""
+        p = self.b.build_payload(ThinkingMode.NO_THINK, preserve_thinking=False)
+        ctk = p.extra_body["chat_template_kwargs"]
+        assert "enable_thinking" in ctk
+        assert ctk["enable_thinking"] is False
+
+    def test_preserve_thinking_in_payload(self):
+        p = self.b.build_payload(ThinkingMode.THINK, preserve_thinking=True)
+        assert p.extra_body["chat_template_kwargs"]["preserve_thinking"] is True
+
+    def test_no_think_soft_switch_warning(self):
+        p = self.b.build_payload(
+            ThinkingMode.THINK,
+            messages=[{"role": "user", "content": "/no_think answer"}],
+        )
+        assert any("/no_think" in w for w in p.warnings)
+
+    def test_detect_port_8000(self):
+        assert self.b.detect("http://localhost:8000/v1") > 0
+
+
+class TestDashScopeBackend:
+    def setup_method(self):
+        self.b = DashScopeBackend()
+
+    def test_top_level_format(self):
+        p = self.b.build_payload(ThinkingMode.NO_THINK)
+        assert "enable_thinking" in p.extra_body
+        assert "chat_template_kwargs" not in p.extra_body
+        assert p.extra_body["enable_thinking"] is False
+
+    def test_warns_on_nested_format(self):
+        p = self.b.build_payload(
+            ThinkingMode.THINK,
+            extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+        )
+        assert len(p.warnings) > 0
+
+    def test_detect_aliyuncs(self):
+        assert self.b.detect("https://dashscope.aliyuncs.com/v1") > 0
+
+
+class TestLlamaCppBackend:
+    def test_mismatch_warning(self):
+        b = LlamaCppBackend(server_enable_thinking=True)
+        p = b.build_payload(ThinkingMode.NO_THINK)
+        assert len(p.warnings) >= 1
+        assert p.enable_thinking is True
+
+    def test_startup_command_no_think(self):
+        cmd = LlamaCppBackend.get_startup_command(enable_thinking=False)
+        assert "--reasoning-budget 0" in cmd
+        assert '"enable_thinking": false' in cmd
+
+    def test_startup_command_think(self):
+        cmd = LlamaCppBackend.get_startup_command(enable_thinking=True)
+        assert "--reasoning-budget 0" not in cmd
+
+
+class TestSGLangBackend:
+    def test_same_format_as_vllm(self):
+        b = SGLangBackend()
+        p = b.build_payload(ThinkingMode.NO_THINK)
+        assert p.extra_body["chat_template_kwargs"]["enable_thinking"] is False
+
+
+class TestAutoDetection:
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            ("http://localhost:8000/v1", "vllm"),
+            ("http://localhost:30000/v1", "sglang"),
+            ("https://dashscope.aliyuncs.com/v1", "dashscope"),
+            ("http://localhost:8080/v1", "llamacpp"),
+        ],
+    )
+    def test_detect_backend(self, url, expected):
+        b = detect_backend(url)
+        assert b.backend.value == expected

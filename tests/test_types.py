@@ -1,0 +1,56 @@
+from qwen_think.types import (
+    NON_THINKING_SAMPLING,
+    THINKING_SAMPLING,
+    Backend,
+    Complexity,
+    Message,
+    ThinkingMode,
+)
+
+
+def test_backend_values():
+    assert Backend.VLLM.value == "vllm"
+    assert Backend.SGLANG.value == "sglang"
+    assert Backend.DASHSCOPE.value == "dashscope"
+    assert Backend.LLAMACPP.value == "llamacpp"
+
+
+def test_thinking_mode_values():
+    assert ThinkingMode.THINK.value == "think"
+    assert ThinkingMode.NO_THINK.value == "no_think"
+
+
+def test_complexity_ordering():
+    assert Complexity.SIMPLE.value == "simple"
+    assert Complexity.AGENTIC.value == "agentic"
+
+
+def test_sampling_config_to_dict():
+    d = THINKING_SAMPLING.to_dict()
+    assert d["temperature"] == 1.0
+    assert d["top_p"] == 0.95
+    assert d["top_k"] == 20
+
+
+def test_sampling_constants_differ():
+    assert THINKING_SAMPLING.temperature != NON_THINKING_SAMPLING.temperature
+    assert THINKING_SAMPLING.top_p != NON_THINKING_SAMPLING.top_p
+
+
+def test_message_openai_dict_plain():
+    msg = Message(role="assistant", content="hello", thinking_content="reasoning")
+    d = msg.to_openai_dict()
+    assert d == {"role": "assistant", "content": "hello"}
+    assert "reasoning_content" not in d
+
+
+def test_message_openai_dict_with_thinking():
+    msg = Message(role="assistant", content="hello", thinking_content="reasoning")
+    d = msg.to_openai_dict(include_thinking=True)
+    assert d["reasoning_content"] == "reasoning"
+
+
+def test_message_no_thinking():
+    msg = Message(role="user", content="hi")
+    d = msg.to_openai_dict(include_thinking=True)
+    assert "reasoning_content" not in d
